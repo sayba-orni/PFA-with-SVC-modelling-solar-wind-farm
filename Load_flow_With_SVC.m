@@ -3,7 +3,6 @@
 
 clc; clear; close all;
 
-%% Network data (per unit)
 y12 = 1/(0.02 + 0.06i);   B12 = 0.03i;
 y13 = 1/(0.08 + 0.24i);   B13 = 0.025i;
 y23 = 1/(0.06 + 0.25i);   B23 = 0.020i;
@@ -18,7 +17,6 @@ Y_base = [ (y12+y13+B12+B13)                     -y12                     -y13  
             0                                   -y24                               -y34   (y34+y45+y24+B34+B45+B24) -y45
             0                                   -y25                                0                   -y45   (y25+y45+B25+B45) ];
 
-%% ---------------- Problem setup ----------------
 Sbase     = 100;                % MVA
 slack     = 1;
 svc_bus   = 3;                  % SVC shunt at bus 3
@@ -50,11 +48,11 @@ pq_set  = 2:5;                 % PQ buses (all non-slack)
 while err > tol && iter < max_iter
     iter = iter + 1;
 
-    % --- Ybus with SVC this iteration ---
+    %  Ybus with SVC this iteration 
     Y = Y_base;
     Y(svc_bus, svc_bus) = Y(svc_bus, svc_bus) + 1i*B_svc;
 
-    % --- Compute P, Q from current state ---
+    %  Compute P, Q from current state 
     N = 5;
     Pcalc = zeros(1,N); Qcalc = zeros(1,N);
     for i = 1:N
@@ -69,7 +67,7 @@ while err > tol && iter < max_iter
     % Hold |V3| to setpoint while regulating
     if svc_regulating, V_abs(svc_bus) = Vref_svc; end
 
-    % --- Mismatch vector ---
+    %  Mismatch vector 
     dP = Psch - Pcalc;
     dQ = Qsch - Qcalc;
     misP = dP(ang_idx);          % ΔP for 2..5
@@ -78,7 +76,7 @@ while err > tol && iter < max_iter
 
     err = max(abs(M)); if err <= tol, break; end
 
-    % --- Build Jacobian ---
+    % Build Jacobian 
     na = numel(ang_idx);               % 4
     mag_unknowns = pq_set;             % start with 2..5 magnitudes
     addB = 0;
@@ -196,7 +194,7 @@ for e = 1:size(lines,1)
     fprintf('%d    %d\t %.5f\t  %8.4f\t   %9.5f\t   %9.5f\n', i, k, out(1), out(2), out(3), out(4));
 end
 
-% ===================== helper =====================
+%  helper 
 function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
     Vi = Vm_i * exp(1i*deg2rad(ang_i_deg));
     Vj = Vm_j * exp(1i*deg2rad(ang_j_deg));
@@ -207,3 +205,4 @@ function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
     Qloss_MVAr= Sbase * imag(S_loss_pu);
     r = [Iabs, Iang, Ploss_MW, Qloss_MVAr];
 end
+
