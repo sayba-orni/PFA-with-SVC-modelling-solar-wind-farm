@@ -39,7 +39,7 @@ Qg = [0  30  0  0  0]/Sbase;     % Q at bus 2 is fixed (PQ) in this variant
 Psch = Pg - Pd;
 Qsch = Qg - Qd;
 
-%%  NR settings 
+
 tol = 1e-6; max_iter = 50; iter = 0; err = 1;
 
 ang_idx = 2:5;                 % angles for buses 2..5
@@ -173,7 +173,7 @@ while err > tol && iter < max_iter
     if svc_regulating, V_abs(svc_bus) = Vref_svc; end
 end
 
-%%  Results
+
 V_deg = V_ang * 180/pi;
 fprintf('Converged in %d iterations. Max mismatch = %.3e\n', iter, err);
 for b = 1:5
@@ -182,7 +182,7 @@ end
 Qsvc_MVAr = -(V_abs(svc_bus)^2) * B_svc * Sbase;
 fprintf('\nSVC: B = %+8.5f pu   =>   Q_svc = %+8.3f MVAr\n', B_svc, Qsvc_MVAr);
 
-%%  line currents & losses (series only) 
+
 lines = [1 2; 1 3; 2 3; 2 4; 2 5; 3 4; 4 5];
 Zs    = [0.02+0.06i; 0.08+0.24i; 0.06+0.25i; 0.06+0.18i; ...
          0.04+0.12i; 0.01+0.03i; 0.08+0.24i];
@@ -205,4 +205,5 @@ function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
     Qloss_MVAr= Sbase * imag(S_loss_pu);
     r = [Iabs, Iang, Ploss_MW, Qloss_MVAr];
 end
+
 
