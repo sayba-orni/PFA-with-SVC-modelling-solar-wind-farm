@@ -1,182 +1,209 @@
-clc;
-clear all;
-close all;
+% NR Load Flow with SVC at Bus 3 (Bus 2 is PQ) 
+% Sbase = 100 MVA
 
-% Define Admittance Matrix
-y12=(0.02+0.06*i)^-1;       B12=0.03*i;
-y13=(0.08+0.24*i)^-1;       B13=0.025*i;
-y23=(0.06+0.25*i)^-1;       B23=0.02*i;
-y24=(0.06+0.18*i)^-1;       B24=0.02*i;
-y25=(0.04+0.12*i)^-1;       B25=0.015*i;
-y34=(0.01+0.03*i)^-1;       B34=0.01*i;
-y45=(0.08+0.24*i)^-1;       B45=0.025*i;
+clc; clear; close all;
 
-Y_matrix=[ y12+y13+B12+B13   -y12                         -y13                0                        0 ;
-    -y12              y12+y23+y24+y25+B23+B25+B24+B12   -y23              -y24                      -y25
-    -y13                -y23                y13+y23+y34+B13+B23+B34   -y34                       0
-    0                 -y24                        -y34             y34+y45+y24+B24+B34+B45    -y45
-    0                 -y25                           0                -y45             y25+y45+B25+B45];
+%% Network data (per unit)
+y12 = 1/(0.02 + 0.06i);   B12 = 0.03i;
+y13 = 1/(0.08 + 0.24i);   B13 = 0.025i;
+y23 = 1/(0.06 + 0.25i);   B23 = 0.020i;
+y24 = 1/(0.06 + 0.18i);   B24 = 0.020i;
+y25 = 1/(0.04 + 0.12i);   B25 = 0.015i;
+y34 = 1/(0.01 + 0.03i);   B34 = 0.010i;
+y45 = 1/(0.08 + 0.24i);   B45 = 0.025i;
 
-svc_bus=3;
+Y_base = [ (y12+y13+B12+B13)                     -y12                     -y13                   0                      0
+           -y12               (y12+y23+y24+y25+B12+B23+B24+B25)           -y23                 -y24                  -y25
+           -y13                                 -y23        (y13+y23+y34+B13+B23+B34)         -y34                   0
+            0                                   -y24                               -y34   (y34+y45+y24+B34+B45+B24) -y45
+            0                                   -y25                                0                   -y45   (y25+y45+B25+B45) ];
 
-% svc_suceptance
-B_svc=1;              % 100 VAr Rating (initial)
+%% ---------------- Problem setup ----------------
+Sbase     = 100;                % MVA
+slack     = 1;
+svc_bus   = 3;                  % SVC shunt at bus 3
+Vref_svc  = 1.00;               % target |V3| while regulating
+B_svc     = 0.0;                % initial susceptance
+Bmin      = -1.0;               % ≈ -100 MVAr   (capacitive => injects +Q)
+Bmax      = +1.0;               % ≈ +100 MVAr   (inductive  => absorbs Q)
+svc_regulating = true;          % start regulating
 
-% Define Voltage Magnitudes and Angles
-V_abs = [1.06 , 1 , 1 , 1, 1 ] ;
-V_angle = [0 0 0 0 0] ;
+% Flat start
+V_abs   = [1.06, 1.00, Vref_svc, 1.00, 1.00];
+V_ang   = zeros(1,5);
 
+% Scheduled load/gen (bus 2 is PQ here)
+Pd = [0  20 45 40 60]/Sbase;
+Qd = [0  10 15  5 10]/Sbase;
+Pg = [0  40  0  0  0]/Sbase;
+Qg = [0  30  0  0  0]/Sbase;     % Q at bus 2 is fixed (PQ) in this variant
 
-max_ittr=1;
-num_of_it=1;
-tol=0.000001;
+Psch = Pg - Pd;
+Qsch = Qg - Qd;
 
-n=5;
-PV=0;
-PQ=n-PV-1;
+%%  NR settings 
+tol = 1e-6; max_iter = 50; iter = 0; err = 1;
 
-J1=zeros(PV+PQ,PV+PQ);
-J2=zeros(PV+PQ,PQ);
-J3=zeros(PQ,PV+PQ);
-J4=zeros(PQ,PQ);
-error=1;
-%qerror=1;
+ang_idx = 2:5;                 % angles for buses 2..5
+pq_set  = 2:5;                 % PQ buses (all non-slack)
 
-while error>=tol
+while err > tol && iter < max_iter
+    iter = iter + 1;
 
-    Y_matrix(svc_bus,svc_bus)=Y_matrix(svc_bus,svc_bus)+B_svc*1i;
+    % --- Ybus with SVC this iteration ---
+    Y = Y_base;
+    Y(svc_bus, svc_bus) = Y(svc_bus, svc_bus) + 1i*B_svc;
 
-    % Define Power Demand 
-    Pd_pu = [0  20  45  40 60 ].*1/100 ;
-    Qd_pu = [0  10  15  5  10 ].*1/100 ;
-
-    % Define Power Generation
-    Pg_Pu = [0 , 40 , 0 , 0, 0]/100;
-
-    Qg_pu = [0 , 0.30 , 0, 0, 0];
-    if svc_bus==2
-
-    Qg_pu(svc_bus)=0.3+(V_abs(svc_bus)*V_abs(svc_bus)*B_svc);
-    else
-      Qg_pu(svc_bus)=+V_abs(svc_bus)*V_abs(svc_bus)*B_svc;
-    end
-
-    P_scheduled = Pg_Pu - Pd_pu;
-    Q_scheduled = Qg_pu - Qd_pu;
-
-
-    % Calculate Calculated Power
-    Q_calculated = zeros(1,5);
-    P_calculated = zeros(1,5);
-
-    for i = 1 : 5
-        for k = 1 : 5
-            Q_calculated(i) = Q_calculated(i) - V_abs(i)*V_abs(k)*abs(Y_matrix(i,k)) * sin( angle(Y_matrix(i,k)) + V_angle(k) - V_angle(i) );
-            P_calculated(i) = P_calculated(i) + V_abs(i)*V_abs(k)*abs(Y_matrix(i,k)) * cos( angle(Y_matrix(i,k)) + V_angle(k) - V_angle(i) );
+    % --- Compute P, Q from current state ---
+    N = 5;
+    Pcalc = zeros(1,N); Qcalc = zeros(1,N);
+    for i = 1:N
+        for k = 1:N
+            Vi = V_abs(i); Vk = V_abs(k);
+            Yik = Y(i,k); th = angle(Yik) + V_ang(k) - V_ang(i);
+            Pcalc(i) = Pcalc(i) + Vi*Vk*abs(Yik)*cos(th);
+            Qcalc(i) = Qcalc(i) - Vi*Vk*abs(Yik)*sin(th);
         end
     end
-    % Calculate Mismatches
-    del_P = P_scheduled - P_calculated;
-    del_Q = Q_scheduled - Q_calculated;
-    Mismatch = [del_P(2:5),del_Q(2:5)]';
 
-    % Calculate Jacobians
-    [r1,c1]=size(J1);
-    for i = 2 : r1+1
-        for j = 2 : c1+1
-            if i == j
-                J1(i-1,j-1) = - Q_calculated(i) - abs( V_abs(i)*V_abs(i)*abs(Y_matrix(i,i)) ) * sin( angle(Y_matrix(i,i)) );
+    % Hold |V3| to setpoint while regulating
+    if svc_regulating, V_abs(svc_bus) = Vref_svc; end
+
+    % --- Mismatch vector ---
+    dP = Psch - Pcalc;
+    dQ = Qsch - Qcalc;
+    misP = dP(ang_idx);          % ΔP for 2..5
+    misQ = dQ(pq_set);           % ΔQ for 2..5
+    M = [misP, misQ]';           % 8x1
+
+    err = max(abs(M)); if err <= tol, break; end
+
+    % --- Build Jacobian ---
+    na = numel(ang_idx);               % 4
+    mag_unknowns = pq_set;             % start with 2..5 magnitudes
+    addB = 0;
+    if svc_regulating
+        % replace |V3| column by dB column
+        mag_unknowns = setdiff(mag_unknowns, svc_bus);
+        addB = 1;
+    end
+    nm = numel(mag_unknowns);
+
+    J11 = zeros(na,na);                % dP/dδ
+    J12 = zeros(na,nm+addB);           % dP/d|V| (+ dP/dB column if addB)
+    J21 = zeros(numel(pq_set), na);    % dQ/dδ
+    J22 = zeros(numel(pq_set), nm+addB);% dQ/d|V| (+ dQ/dB column if addB)
+
+    % Fill J11, J12
+    for r = 1:na
+        i = ang_idx(r);
+        for c = 1:na
+            k = ang_idx(c);
+            if i==k
+                J11(r,c) = -Qcalc(i) - V_abs(i)^2*abs(Y(i,i))*sin(angle(Y(i,i)));
             else
-                J1(i-1,j-1) = -abs( V_abs(i)*V_abs(j)*abs(Y_matrix(i,j)) ) * sin( angle(Y_matrix(i,j)) + V_angle(j) - V_angle(i) );
+                thik = angle(Y(i,k)) + V_ang(k) - V_ang(i);
+                J11(r,c) = -V_abs(i)*V_abs(k)*abs(Y(i,k))*sin(thik);
+            end
+        end
+        for c = 1:nm
+            k = mag_unknowns(c);
+            if i==k
+                J12(r,c) =  Pcalc(i) + V_abs(i)^2*abs(Y(i,i))*cos(angle(Y(i,i)));
+            else
+                thik = angle(Y(i,k)) + V_ang(k) - V_ang(i);
+                J12(r,c) =  V_abs(i)*V_abs(k)*abs(Y(i,k))*cos(thik);
+            end
+        end
+    end
+    % dP/dB column is zero
+    if addB, J12(:, nm+1) = 0; end
+
+    % Fill J21, J22 (rows correspond to pq_set)
+    for r = 1:numel(pq_set)
+        i = pq_set(r);
+        for c = 1:na
+            k = ang_idx(c);
+            if i==k
+                J21(r,c) =  Pcalc(i) - V_abs(i)^2*abs(Y(i,i))*cos(angle(Y(i,i)));
+            else
+                thik = angle(Y(i,k)) + V_ang(k) - V_ang(i);
+                J21(r,c) = -V_abs(i)*V_abs(k)*abs(Y(i,k))*cos(thik);
+            end
+        end
+        for c = 1:nm
+            k = mag_unknowns(c);
+            if i==k
+                J22(r,c) =  Qcalc(i) - V_abs(i)^2*abs(Y(i,i))*sin(angle(Y(i,i)));
+            else
+                thik = angle(Y(i,k)) + V_ang(k) - V_ang(i);
+                J22(r,c) = -V_abs(i)*V_abs(k)*abs(Y(i,k))*sin(thik);
             end
         end
     end
 
-    [r1,c1]=size(J2);
-    for i = 2 : r1+1
-        for j = 2 : c1+1
-            if i == j
-                J2(i-1,j-1) = P_calculated(i) + abs( V_abs(i)*V_abs(i)*abs(Y_matrix(i,i)) ) * cos( angle(Y_matrix(i,i)) );
-            else
-                J2(i-1,j-1) = abs( V_abs(i)*V_abs(j)*abs(Y_matrix(i,j)) ) * cos( angle(Y_matrix(i,j)) + V_angle(j) - V_angle(i) );
-            end
-        end
-    end
-    J2_col=zeros(r1,1);
-    J2(:,svc_bus-1)=J2_col;
-    
-
-    [r1,c1]=size(J3);
-    for i = 2 : r1+1
-        for j = 2 : c1+1
-            if i == j
-                J3(i-1,j-1) = P_calculated(i) - abs( V_abs(i)*V_abs(i)*abs(Y_matrix(i,i)) ) * cos( angle(Y_matrix(i,i)) );
-            else
-                J3(i-1,j-1) = -abs( V_abs(i)*V_abs(j)*abs(Y_matrix(i,j)) ) * cos( angle(Y_matrix(i,j)) + V_angle(j) - V_angle(i) );
-            end
-        end
+    % dQ/dB column: only the SVC bus row is +|V3|^2
+    if addB
+        J22(:, nm+1) = 0;
+        row_svc = find(pq_set==svc_bus);
+        J22(row_svc, nm+1) = V_abs(svc_bus)^2;
     end
 
-    [r1,c1]=size(J4);
-    for i = 2 : r1+1
-        for j = 2 : c1+1
-            if i == j
-                J4(i-1,j-1) = Q_calculated(i) - abs( V_abs(i)*V_abs(i)*abs(Y_matrix(i,i)) ) * sin( angle(Y_matrix(i,i)) );
-            else
-                J4(i-1,j-1) = -abs( V_abs(i)*V_abs(j)*abs(Y_matrix(i,j)) ) * sin( angle(Y_matrix(i,j)) + V_angle(j) - V_angle(i) );
-            end
-        end
+    % Solve
+    J = [J11 J12; J21 J22];
+    dx = J \ M;
+
+    % Updates
+    dDel    = dx(1:na).';
+    dRest   = dx(na+1:end).';
+
+    V_ang(ang_idx) = V_ang(ang_idx) + dDel;
+
+    if nm > 0
+        dVrel = dRest(1:nm);
+        V_abs(mag_unknowns) = V_abs(mag_unknowns) .* (1 + dVrel);
     end
-    
-    J4_col=zeros(r1,1);
-    J4_col(svc_bus-1)=-1;
-    J4(:,(svc_bus-1))=J4_col;
-    
+    if addB
+        dB = dRest(end);
+        B_svc = B_svc + dB;
+        % If B hits limit, clamp and release regulation next iteration
+        if B_svc > Bmax, B_svc = Bmax; svc_regulating = false; end
+        if B_svc < Bmin, B_svc = Bmin; svc_regulating = false; end
+    end
 
-
-    J=[J1 J2;J3 J4];
-
-    % Correct Voltage Magnitudes and Angles
-    Correction = inv(J) * Mismatch ;
-    Correction=Correction';
-    Correction(5:(4+svc_bus-2))= Correction(5:(4+svc_bus-2)).*V_abs(2:svc_bus-1);
-    Correction((4+svc_bus):end)=Correction((4+svc_bus):end).*V_abs(svc_bus+1:end);
-
-    V_abs(2:svc_bus-1) = V_abs(2:svc_bus-1) + Correction(5:(4+svc_bus-2));
-    V_abs(svc_bus+1:end)=V_abs(svc_bus+1:end)+ Correction((4+svc_bus):end);
-
-    V_angle(2:5) = V_angle(2:5) + Correction(1:4);
-    Correction(4+svc_bus-1)=Correction(4+svc_bus-1);
-    B_svc=B_svc+Correction(4+svc_bus-1);
-
-  
-    num_of_it=num_of_it+1;
-    error=max(abs(Mismatch));
-    % perror=abs(max(P_scheduled-P_calculated));
-    % qerror=abs(max(Q_scheduled-Q_calculated));
-    Correction
-    B_svc
-    Mismatch
-    error
+    % enforce the target while regulating
+    if svc_regulating, V_abs(svc_bus) = Vref_svc; end
 end
-V_ANGLE=((V_angle)*180)/pi
-V_abs'
-disp(-V_abs(svc_bus)*V_abs(svc_bus)* B_svc*100*10e6)
 
-Current_and_lineloss=zeros(7,4);
-Current_and_lineloss(1,:)=current_and_lineloss(V_abs(1),V_ANGLE(1),V_abs(2),V_ANGLE(2),0.02,0.06);
-Current_and_lineloss(2,:)=current_and_lineloss(V_abs(1),V_ANGLE(1),V_abs(3),V_ANGLE(3),0.08,0.24);
-Current_and_lineloss(3,:)=current_and_lineloss(V_abs(2),V_ANGLE(2),V_abs(3),V_ANGLE(3),0.06,0.25);
-Current_and_lineloss(4,:)=current_and_lineloss(V_abs(2),V_ANGLE(2),V_abs(4),V_ANGLE(4),0.06,0.18);
-Current_and_lineloss(5,:)=current_and_lineloss(V_abs(2),V_ANGLE(2),V_abs(5),V_ANGLE(5),0.04,0.12);
-Current_and_lineloss(6,:)=current_and_lineloss(V_abs(3),V_ANGLE(3),V_abs(4),V_ANGLE(4),0.01,0.03);
-Current_and_lineloss(7,:)=current_and_lineloss(V_abs(4),V_ANGLE(4),V_abs(5),V_ANGLE(5),0.08,0.24);
+%%  Results
+V_deg = V_ang * 180/pi;
+fprintf('Converged in %d iterations. Max mismatch = %.3e\n', iter, err);
+for b = 1:5
+    fprintf('Bus %d: |V| = %.5f  angle = %+8.4f deg\n', b, V_abs(b), V_deg(b));
+end
+Qsvc_MVAr = -(V_abs(svc_bus)^2) * B_svc * Sbase;
+fprintf('\nSVC: B = %+8.5f pu   =>   Q_svc = %+8.3f MVAr\n', B_svc, Qsvc_MVAr);
 
-fprintf('From To\t Current Mag.\tCurrent Angle(deg) Real Loss(MW) Reactive Loss(MVAr)\n');
+%%  line currents & losses (series only) 
+lines = [1 2; 1 3; 2 3; 2 4; 2 5; 3 4; 4 5];
+Zs    = [0.02+0.06i; 0.08+0.24i; 0.06+0.25i; 0.06+0.18i; ...
+         0.04+0.12i; 0.01+0.03i; 0.08+0.24i];
 
+fprintf('\nFrom To\t I_mag(pu)\t I_ang(deg)\t P_loss(MW)\t Q_loss(MVAr)\n');
+for e = 1:size(lines,1)
+    i = lines(e,1); k = lines(e,2);
+    out = current_and_lineloss(V_abs(i), V_deg(i), V_abs(k), V_deg(k), Zs(e), Sbase);
+    fprintf('%d    %d\t %.5f\t  %8.4f\t   %9.5f\t   %9.5f\n', i, k, out(1), out(2), out(3), out(4));
+end
 
-% Display data
-lines = {'1    2', '1    3', '2    3', '2    4', '2    5', '3    4', '4    5'};
-for i = 1:size(Current_and_lineloss, 1)
-    fprintf('%s\t\t%.4f\t\t%.4f\t\t%.6f\t\t%.6f\n', lines{i}, Current_and_lineloss(i, :));
+% ===================== helper =====================
+function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
+    Vi = Vm_i * exp(1i*deg2rad(ang_i_deg));
+    Vj = Vm_j * exp(1i*deg2rad(ang_j_deg));
+    Iij = (Vi - Vj) / Z;                 % current i->j (series branch)
+    Iabs = abs(Iij); Iang = rad2deg(angle(Iij));
+    S_loss_pu = (Iabs^2) * Z;            % I^2*Z
+    Ploss_MW  = Sbase * real(S_loss_pu);
+    Qloss_MVAr= Sbase * imag(S_loss_pu);
+    r = [Iabs, Iang, Ploss_MW, Qloss_MVAr];
 end
