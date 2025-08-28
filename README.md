@@ -1,4 +1,4 @@
-# PFA-with-SVC-modelling-solar-wind-farm
+# modelling-SVC-RES
 The integration of renewable energy sources, particularly solar and wind, into power systems has
 brought forth challenges in power flow control. This project explores the impact of renewables
 on power flow control and investigates the performance of Flexible AC Transmission Systems
