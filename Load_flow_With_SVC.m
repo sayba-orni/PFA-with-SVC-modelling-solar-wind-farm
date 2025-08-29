@@ -3,6 +3,7 @@
 
 clc; clear; close all;
 
+
 y12 = 1/(0.02 + 0.06i);   B12 = 0.03i;
 y13 = 1/(0.08 + 0.24i);   B13 = 0.025i;
 y23 = 1/(0.06 + 0.25i);   B23 = 0.020i;
@@ -17,14 +18,14 @@ Y_base = [ (y12+y13+B12+B13)                     -y12                     -y13  
             0                                   -y24                               -y34   (y34+y45+y24+B34+B45+B24) -y45
             0                                   -y25                                0                   -y45   (y25+y45+B25+B45) ];
 
+
 Sbase     = 100;                % MVA
-slack     = 1;
 svc_bus   = 3;                  % SVC shunt at bus 3
-Vref_svc  = 1.00;               % target |V3| while regulating
+Vref_svc  = 1.00;               % target |V3|
 B_svc     = 0.0;                % initial susceptance
-Bmin      = -1.0;               % ≈ -100 MVAr   (capacitive => injects +Q)
-Bmax      = +1.0;               % ≈ +100 MVAr   (inductive  => absorbs Q)
-svc_regulating = true;          % start regulating
+Bmin      = -1.0;               % wide bounds; we will damp steps so we don't hit them
+Bmax      = +1.0;
+svc_regulating = true;
 
 % Flat start
 V_abs   = [1.06, 1.00, Vref_svc, 1.00, 1.00];
@@ -45,14 +46,21 @@ tol = 1e-6; max_iter = 50; iter = 0; err = 1;
 ang_idx = 2:5;                 % angles for buses 2..5
 pq_set  = 2:5;                 % PQ buses (all non-slack)
 
+
+alphaV = 0.6;      capV = 0.10;    % magnitude step cap ±0.10 pu
+alphaB = 0.6;      capB = 0.50;    % susceptance step cap ±0.50 pu/iter
+
 while err > tol && iter < max_iter
     iter = iter + 1;
 
-    %  Ybus with SVC this iteration 
+    
     Y = Y_base;
     Y(svc_bus, svc_bus) = Y(svc_bus, svc_bus) + 1i*B_svc;
 
-    %  Compute P, Q from current state 
+    
+    if svc_regulating, V_abs(svc_bus) = Vref_svc; end
+
+    
     N = 5;
     Pcalc = zeros(1,N); Qcalc = zeros(1,N);
     for i = 1:N
@@ -64,35 +72,32 @@ while err > tol && iter < max_iter
         end
     end
 
-    % Hold |V3| to setpoint while regulating
-    if svc_regulating, V_abs(svc_bus) = Vref_svc; end
-
-    %  Mismatch vector 
+    
     dP = Psch - Pcalc;
     dQ = Qsch - Qcalc;
-    misP = dP(ang_idx);          % ΔP for 2..5
-    misQ = dQ(pq_set);           % ΔQ for 2..5
-    M = [misP, misQ]';           % 8x1
+    misP = dP(ang_idx);                 % ΔP for buses 2..5
+    misQ = dQ(pq_set);                  % ΔQ for buses 2..5
+    M = [misP, misQ]';                  % 8x1
 
     err = max(abs(M)); if err <= tol, break; end
 
-    % Build Jacobian 
+    
     na = numel(ang_idx);               % 4
-    mag_unknowns = pq_set;             % start with 2..5 magnitudes
+    mag_unknowns = pq_set;             
     addB = 0;
     if svc_regulating
-        % replace |V3| column by dB column
+        
         mag_unknowns = setdiff(mag_unknowns, svc_bus);
         addB = 1;
     end
-    nm = numel(mag_unknowns);
+    nm = numel(mag_unknowns);          
 
-    J11 = zeros(na,na);                % dP/dδ
-    J12 = zeros(na,nm+addB);           % dP/d|V| (+ dP/dB column if addB)
-    J21 = zeros(numel(pq_set), na);    % dQ/dδ
-    J22 = zeros(numel(pq_set), nm+addB);% dQ/d|V| (+ dQ/dB column if addB)
+    J11 = zeros(na,na);                
+    J12 = zeros(na,nm+addB);           
+    J21 = zeros(numel(pq_set), na);    
+    J22 = zeros(numel(pq_set), nm+addB);
 
-    % Fill J11, J12
+   
     for r = 1:na
         i = ang_idx(r);
         for c = 1:na
@@ -117,7 +122,7 @@ while err > tol && iter < max_iter
     % dP/dB column is zero
     if addB, J12(:, nm+1) = 0; end
 
-    % Fill J21, J22 (rows correspond to pq_set)
+   
     for r = 1:numel(pq_set)
         i = pq_set(r);
         for c = 1:na
@@ -140,39 +145,42 @@ while err > tol && iter < max_iter
         end
     end
 
-    % dQ/dB column: only the SVC bus row is +|V3|^2
+    % dQ/dB column: only the SVC bus row is  -|V3|^2   (since Q = -|V|^2 B)
     if addB
         J22(:, nm+1) = 0;
         row_svc = find(pq_set==svc_bus);
-        J22(row_svc, nm+1) = V_abs(svc_bus)^2;
+        J22(row_svc, nm+1) = - V_abs(svc_bus)^2;
     end
 
-    % Solve
-    J = [J11 J12; J21 J22];
+   
+    J = [J11 J12; J21 J22]; 
     dx = J \ M;
 
-    % Updates
-    dDel    = dx(1:na).';
-    dRest   = dx(na+1:end).';
+   
+    dDel  = dx(1:na).';
+    dRest = dx(na+1:end).';
 
+    % angles
     V_ang(ang_idx) = V_ang(ang_idx) + dDel;
 
+    
     if nm > 0
-        dVrel = dRest(1:nm);
-        V_abs(mag_unknowns) = V_abs(mag_unknowns) .* (1 + dVrel);
+        dV = dRest(1:nm);
+        dV = max(min(dV,  capV), -capV);      % cap |ΔV| per iter
+        V_abs(mag_unknowns) = V_abs(mag_unknowns) + alphaV * dV;
     end
+
     if addB
         dB = dRest(end);
-        B_svc = B_svc + dB;
-        % If B hits limit, clamp and release regulation next iteration
-        if B_svc > Bmax, B_svc = Bmax; svc_regulating = false; end
-        if B_svc < Bmin, B_svc = Bmin; svc_regulating = false; end
+        dB = max(min(dB, capB), -capB);       % cap |ΔB| per iter
+        B_svc = B_svc + alphaB * dB;
+        
+        B_svc = min(max(B_svc, Bmin), Bmax);
     end
 
-    % enforce the target while regulating
+  
     if svc_regulating, V_abs(svc_bus) = Vref_svc; end
 end
-
 
 V_deg = V_ang * 180/pi;
 fprintf('Converged in %d iterations. Max mismatch = %.3e\n', iter, err);
@@ -194,7 +202,7 @@ for e = 1:size(lines,1)
     fprintf('%d    %d\t %.5f\t  %8.4f\t   %9.5f\t   %9.5f\n', i, k, out(1), out(2), out(3), out(4));
 end
 
-%  helper 
+
 function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
     Vi = Vm_i * exp(1i*deg2rad(ang_i_deg));
     Vj = Vm_j * exp(1i*deg2rad(ang_j_deg));
@@ -205,5 +213,3 @@ function r = current_and_lineloss(Vm_i, ang_i_deg, Vm_j, ang_j_deg, Z, Sbase)
     Qloss_MVAr= Sbase * imag(S_loss_pu);
     r = [Iabs, Iang, Ploss_MW, Qloss_MVAr];
 end
-
-
